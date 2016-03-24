@@ -42,14 +42,12 @@ require(['common/netflux.js',
                 wc.send(message).then(function() {});
             }
         });
-        
-        realtime.getHistory = function() {
-          var hc;
-          wc.peers.forEach(function (p) { if (!hc || p.linkQuality > hc.linkQuality) { hc = p; } });
-          hc.send(JSON.stringify(['GET_HISTORY', wc.id]));
-        }
-        
-        
+
+        realtime.start();
+
+        var hc;
+        wc.peers.forEach(function (p) { if (!hc || p.linkQuality > hc.linkQuality) { hc = p; } });
+        hc.send(JSON.stringify(['GET_HISTORY', wc.id]));
 
         var RealtimeJSON = ChainJSON.init(realtime);
         

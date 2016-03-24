@@ -131,9 +131,10 @@ define(function() {
           lastPatch = new Date();
           onMessage();
       });
-      realtime.start();
-      realtime.getHistory();
-      
+
+      // Update our object with the current value stored in Chainpad
+      onMessage();
+
       // Check if the history is synced
       // TODO : implement this in Chainpad
       var lastPatch = new Date();
