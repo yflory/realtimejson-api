@@ -1,11 +1,7 @@
 define(function() {
-  var realtime;
-  var ready = false;
-  var patching = false;
-  var p;
-  var stringJSON;
 
-  var applyChange = function(ctx, oldval, newval) {
+  // Make the necessary operations (insert/remove) in Chainpad to sync the latest changes
+  var applyChange = function(rt, oldval, newval) {
     if (oldval === newval) {
         return;
     }
@@ -28,67 +24,69 @@ define(function() {
         newvalLength: newval.length
     };
     if (oldval.length !== commonStart + commonEnd) {
-        if (ctx.localChange) { ctx.localChange(true); }
-        ctx.remove(commonStart, oldval.length - commonStart - commonEnd);
+        if (rt.localChange) { rt.localChange(true); }
+        rt.remove(commonStart, oldval.length - commonStart - commonEnd);
     }
     if (newval.length !== commonStart + commonEnd) {
-        if (ctx.localChange) { ctx.localChange(true); }
-        ctx.insert(commonStart, newval.slice(commonStart, newval.length - commonEnd));
+        if (rt.localChange) { rt.localChange(true); }
+        rt.insert(commonStart, newval.slice(commonStart, newval.length - commonEnd));
     }
   };
 
-  var onReady = function() {};
-
-  var changeHandlers = {};
-  var mainHandler;
-
-  var onChange = function(keypath, value) {
-    console.log('onchange');
-    if(Object.keys(changeHandlers).indexOf(keypath) !== -1) {
-      changeHandlers[keypath](value);
+  // Trigger the handlers when an object has changed
+  var onChange = function(ctx, keypath, value) {
+    if(Object.keys(ctx.changeHandlers).indexOf(keypath) !== -1) {
+      ctx.changeHandlers[keypath](value);
       return;
     }
-    if(typeof mainHandler === "function") {
-      mainHandler(value);
+    if(typeof ctx.mainHandler === "function") {
+      ctx.mainHandler(value);
     }
   };
 
-  var proxyDelete = function(target, prop) {
-      delete target[prop];
-      if(patching) { return true; }
-      if(JSON.stringify(p) === realtime.getUserDoc()) { return true; }
-      var newValue = JSON.stringify(p);
-      applyChange(realtime, stringJSON, newValue);
-      onMessage();
-      return true;
+  // Make the changes in Chainpad when a property is deleted/added/modified
+  var proxyDelete = function(ctx) {
+      return function(target, prop) {
+          delete target[prop];
+          if(ctx.patching) { return true; }
+          if(JSON.stringify(ctx.p) === ctx.realtime.getUserDoc()) { return true; }
+          var newValue = JSON.stringify(ctx.p);
+          applyChange(ctx.realtime, ctx.stringJSON, newValue);
+          onMessage(ctx);
+        return true;
+      }
   };
-  var proxySet = function(target, prop, value, receiver) {
-      target[prop] = (typeof value === "object") ? new Proxy(value, {
-        set: proxySet,
-        deleteProperty: proxyDelete
-      }) : value;
-      if(patching) { return true; }
-      if(JSON.stringify(p) === realtime.getUserDoc()) { return true; }
-      var newValue = JSON.stringify(p);
-      applyChange(realtime, stringJSON, newValue);
-      onMessage();
-      return true;
+  var proxySet = function(ctx) {
+      return function(target, prop, value, receiver) {
+          target[prop] = (typeof value === "object") ? new Proxy(value, {
+            set: proxySet(ctx),
+            deleteProperty: proxyDelete(ctx)
+          }) : value;
+          if(ctx.patching) { return true; }
+          if(JSON.stringify(ctx.p) === ctx.realtime.getUserDoc()) { return true; }
+          var newValue = JSON.stringify(ctx.p);
+          applyChange(ctx.realtime, ctx.stringJSON, newValue);
+          onMessage(ctx);
+          return true;
+      }
   };
-  var getCollaborativeObject = function() {
-    p = new Proxy({}, {
-        set: proxySet,
-        deleteProperty: proxyDelete
+  // Create the proxy which represents the collaborative object
+  var getCollaborativeObject = function(ctx) {
+    ctx.p = new Proxy({}, {
+        set: proxySet(ctx),
+        deleteProperty: proxyDelete(ctx)
     });
-    return p;
+    return ctx.p;
   }
 
-  var copyObject = function(toObject, fromObject, path) {
+  // Apply the latest remote changes from Chainpad to our proxy
+  var copyObject = function(ctx, toObject, fromObject, path) {
     for (var attrname in fromObject) {
       var keypath = (path === '') ? attrname : path+'.'+attrname;
       if(toObject[attrname] != fromObject[attrname]) {
         if(typeof fromObject[attrname] !== "object" || JSON.stringify(fromObject[attrname]) === "[]" || JSON.stringify(fromObject[attrname]) === "{}") {
           toObject[attrname] = fromObject[attrname];
-          onChange(keypath, fromObject[attrname]);
+          onChange(ctx, keypath, fromObject[attrname]);
         }
         else if(JSON.stringify(toObject[attrname]) !== JSON.stringify(fromObject[attrname])){
           if(typeof toObject[attrname] === "undefined") {
@@ -99,14 +97,14 @@ define(function() {
               toObject[attrname] = {};
             }
           }
-          copyObject(toObject[attrname], fromObject[attrname], keypath);
+          copyObject(ctx, toObject[attrname], fromObject[attrname], keypath);
         }
       }
     }
     for (var attrname in toObject) {
       if(typeof fromObject[attrname] === "undefined") {
         delete toObject[attrname];
-        onChange(keypath, fromObject[attrname]);
+        onChange(ctx, keypath, fromObject[attrname]);
       }
     }
 
@@ -114,26 +112,35 @@ define(function() {
 
   var onJoining = () => {};
   var onLeaving = () => {};
-  var onMessage = () => {
+  var onMessage = (ctx) => {
     // Get the new state of the object from Chainpad
-    var obj = JSON.parse(realtime.getUserDoc());
-    stringJSON = JSON.stringify(obj);
+    var obj = JSON.parse(ctx.realtime.getUserDoc());
+    ctx.stringJSON = JSON.stringify(obj);
     // Update the proxy with the modified property from the patch
-    patching = true;
-    copyObject(p, obj, '');
-    patching = false;
+    ctx.patching = true;
+    copyObject(ctx, ctx.p, obj, '');
+    ctx.patching = false;
   };
   var onPeerMessage = () => {};
 
-  var init = function(rt) {
-      realtime = rt;
-      realtime.onPatch(function() {
+  var create = function(rt) {
+      var ctx = {
+        realtime: rt,
+        ready: false,
+        patching: false,
+        p: null,
+        stringJSON: '',
+        mainHandler: null,
+        changeHandlers: {},
+        onReady: function(){}
+      }
+      ctx.realtime.onPatch(function() {
           lastPatch = new Date();
-          onMessage();
+          onMessage(ctx);
       });
 
       // Update our object with the current value stored in Chainpad
-      onMessage();
+      onMessage(ctx);
 
       // Check if the history is synced
       // TODO : implement this in Chainpad
@@ -145,31 +152,31 @@ define(function() {
             checkReady();
           }
           else {
-            stringJSON = realtime.getUserDoc();
-            ready = true;
-            onReady();
+            stringJSON = ctx.realtime.getUserDoc();
+            ctx.ready = true;
+            ctx.onReady(ctx);
           }
         },200);
       };
       checkReady();
       
-      
-      
       return {
-        getCollaborativeObject: getCollaborativeObject,
+        getCollaborativeObject: function() {
+          return getCollaborativeObject(ctx);
+        },
         on: function(event, arg2, handler) {
           if(event === 'ready') {
-            onReady = arg2;
-            if(ready) {
-              onReady();
+            ctx.onReady = arg2;
+            if(ctx.ready) {
+              ctx.onReady(ctx);
             }
           }
           else if(event === 'change') {
             if(typeof handler !== "function") {
-              mainHandler = arg2;
+              ctx.mainHandler = arg2;
             }
             else {
-              changeHandlers[arg2] = handler;
+              ctx.changeHandlers[arg2] = handler;
             }
           }
         }
@@ -177,6 +184,6 @@ define(function() {
   };
 
   return {
-    init : init
+    create : create
   };
 });

@@ -49,7 +49,7 @@ require(['common/netflux.js',
         wc.peers.forEach(function (p) { if (!hc || p.linkQuality > hc.linkQuality) { hc = p; } });
         hc.send(JSON.stringify(['GET_HISTORY', wc.id]));
 
-        var RealtimeJSON = ChainJSON.init(realtime);
+        var RealtimeJSON = ChainJSON.create(realtime);
         
         var p;
         var $textarea = $('#synced');
@@ -122,6 +122,130 @@ require(['common/netflux.js',
         
         RealtimeJSON.on('change', 'test.sub', function(newVal) {
           console.log("test.sub val : "+newVal);
+        });
+
+        p = RealtimeJSON.getCollaborativeObject();
+        
+        console.log(p);
+    });
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    var channel2 = 'blablublab';
+    var createRealtime2 = function() {
+        return ChainPad.create('User'+Math.floor((Math.random() * 100) + 1),
+                              'y',
+                              channel2,
+                              '{}',
+                              {
+                              transformFunction: JsonOT.validate
+                              });
+    };
+    Netflux.join(channel2, options).then(function(wc) {
+        // Open a Chainpad session
+        var realtime2 = createRealtime2();
+        wc.onmessage = function(peer, msg) {
+          if(msg == "0") { // History is synced
+            return;
+          }
+          // Remove the password from the patch
+          var passLen = msg.substring(0,msg.indexOf(':'));
+          var message = msg.substring(passLen.length+1 + Number(passLen));
+          // Apply the patch in Chainpad
+          realtime2.message(message);
+        }
+        // On sending message
+        realtime2.onMessage(function(message) {
+            if(message) {
+                wc.send(message).then(function() {});
+            }
+        });
+
+        realtime2.start();
+
+        var hc;
+        wc.peers.forEach(function (p) { if (!hc || p.linkQuality > hc.linkQuality) { hc = p; } });
+        hc.send(JSON.stringify(['GET_HISTORY', wc.id]));
+
+        var RealtimeJSON = ChainJSON.create(realtime2);
+        
+        var p;
+        var $textarea = $('#synced2');
+        RealtimeJSON.on('ready', function() {
+          $('#2prop').attr('disabled', false);
+          $('#2prop2').attr('disabled', false);
+          $('#2value').attr('disabled', false);
+          // Ability to change object values
+          $('#2send').click(function() {
+            var prop = $('#2prop').val();
+            var prop2 = $('#2prop2').val();
+            var value = $('#2value').val();
+            if(prop.trim()) {
+              var elem = p[prop];
+              if(prop2.trim()) {
+                if(!value.trim()) {
+                  delete p[prop][prop2];
+                }
+                else if(parseInt(value).toString() === value) {
+                  p[prop][prop2] = parseInt(value);
+                }
+                else if(parseFloat(value).toString() === value) {
+                  p[prop][prop2] = parseFloat(value);
+                }
+                else {
+                try {
+                  var subObject = JSON.parse(value);
+                    p[prop][prop2] = subObject;
+                  }
+                  catch(err) {
+                    p[prop][prop2] = value;
+                  }
+                }
+              } else {
+                if(!value.trim()) {
+                  delete p[prop];
+                }
+                else if(parseInt(value).toString() === value) {
+                  p[prop] = parseInt(value);
+                }
+                else if(parseFloat(value).toString() === value) {
+                  p[prop] = parseFloat(value);
+                }
+                else {
+                  try {
+                    var subObject = JSON.parse(value);
+                    p[prop] = subObject;
+                  }
+                  catch(err) {
+                    p[prop] = value;
+                  }
+                }
+              }
+            }
+            $textarea.val(JSON.stringify(p));
+          });
+          // Get the current value of the proxy
+          $('#2getvalue').click(function(){
+            console.log(p);
+            alert(JSON.stringify(p));
+          });
+        });
+        
+        console.log(realtime);
+        
+        RealtimeJSON.on('change', function(newVal) {
+          $textarea.val(JSON.stringify(p));
+          console.log("MAIN HANDLER CHAN2 val : "+newVal);
+        });
+        
+        RealtimeJSON.on('change', 'test.sub', function(newVal) {
+          console.log("test.sub CHAN2 val : "+newVal);
         });
 
         p = RealtimeJSON.getCollaborativeObject();
